@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>全部入り家計簿</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 900px; margin: 10px auto; padding: 10px; background:#f7f7f7; }
+  h1, h2, h3 { margin: 10px 0; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+  input, select, button { margin:6px 0; padding:8px 10px; font-size:15px; border-radius:8px; border:1px solid #ccc; }
+  input, select { width:100%; box-sizing:border-box; }
+  button { cursor:pointer; background:#fff; }
+  button.primary { background:#ff7fa8; color:#fff; border-color:#ff7fa8; }
+  button.danger { background:#ff3b30; color:#fff; border-color:#ff3b30; }
+  button.small { font-size:12px; padding:4px 6px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-size:14px; background:#fff; }
+  th, td { border:1px solid #ddd; padding:6px; text-align:left; }
+  th { background:#f0f0f0; }
+  .flex { display:flex; gap:8px; flex-wrap:wrap; }
+  .flex > div { flex:1 1 150px; }
+  .summary { display:flex; gap:8px; flex-wrap:wrap; font-size:14px; }
+  .summary-item { flex:1 1 150px; background:#fff; border-radius:12px; padding:10px; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+  .right { text-align:right; }
+  .badge-income { color:#0a0; font-weight:bold; }
+  .badge-expense { color:#c00; font-weight:bold; }
+
+  /* モーダル背景 */
+  .modal-bg {
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.4); display:none; justify-content:center; align-items:center;
+    z-index:1000;
+  }
+
+  /* モーダル本体 */
+  .modal {
+    background:#fff; width:90%; max-width:400px; border-radius:16px;
+    padding:20px; box-shadow:0 4px 12px rgba(0,0,0,0.2);
+    animation: pop 0.25s ease-out;
+  }
+
+  @keyframes pop {
+    from { transform:scale(0.8); opacity:0; }
+    to { transform:scale(1); opacity:1; }
+  }
+
+  .category-item {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 0; border-bottom:1px solid #eee;
+  }
+
+  .color-dot {
+    width:16px; height:16px; border-radius:50%; margin-right:8px;
+    border:1px solid #ccc;
+  }
+
+  .drag-handle {
+    cursor:grab; font-size:18px; padding:0 6px;
+  }
+
+  .color-palette {
+    display:flex; gap:6px; margin-top:6px;
+  }
+
+  .color-swatch {
+    width:24px; height:24px; border-radius:50%; cursor:pointer; border:2px solid #fff;
+    box-shadow:0 0 2px rgba(0,0,0,0.3);
+  }
+</style>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<h1>全部入り 家計簿</h1>
+
+<!-- 入力フォーム -->
+<div class="card">
+  <h3>入力</h3>
+  <div class="flex">
+    <div><input id="date" type="date"></div>
+    <div><input id="title" placeholder="タイトル"></div>
+    <div><input id="amount" type="number" placeholder="金額"></div>
+  </div>
+  <div class="flex">
+    <div>
+      <select id="type">
+        <option value="expense">支出</option>
+        <option value="income">収入</option>
+      </select>
+    </div>
+    <div>
+      <select id="category"></select>
+    </div>
+  </div>
+  <div class="flex">
+    <div><button class="primary" onclick="saveEntry()">保存</button></div>
+    <div><button onclick="clearForm()">クリア</button></div>
+    <div><button onclick="openCategoryModal()">カテゴリ管理</button></div>
+  </div>
+  <input type="hidden" id="editId">
+</div>
+
+<!-- フィルタ -->
+<div class="card">
+  <h3>フィルタ・検索</h3>
+  <div class="flex">
+    <div><label>年月</label><input id="filterMonth" type="month"></div>
+    <div><label>カテゴリ</label><select id="filterCategory"></select></div>
+    <div><label>種別</label>
+      <select id="filterType">
+        <option value="">すべて</option>
+        <option value="expense">支出</option>
+        <option value="income">収入</option>
+      </select>
+    </div>
+  </div>
+  <div class="flex">
+    <div><label>キーワード</label><input id="filterKeyword" placeholder="タイトルで検索"></div>
+    <div style="align-self:flex-end;">
+      <button onclick="applyFilter()">適用</button>
+      <button onclick="resetFilter()">リセット</button>
+    </div>
+  </div>
+</div>
+
+<!-- 集計 -->
+<div class="card">
+  <h3>集計</h3>
+  <div class="summary">
+    <div class="summary-item"><div>収入合計</div><div id="sumIncome" class="right"></div></div>
+    <div class="summary-item"><div>支出合計</div><div id="sumExpense" class="right"></div></div>
+    <div class="summary-item"><div>差額</div><div id="sumBalance" class="right"></div></div>
+  </div>
+</div>
+
+<!-- グラフ -->
+<div class="card">
+  <h3>カテゴリ別グラフ</h3>
+  <canvas id="categoryChart" height="150"></canvas>
+</div>
+
+<!-- 一覧 -->
+<div class="card">
+  <h3>一覧</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>日付</th><th>タイトル</th><th>種別</th><th>金額</th><th>カテゴリ</th><th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="list"></tbody>
+  </table>
+</div>
+
+<!-- 書き出し -->
+<div class="card">
+  <h3>書き出し・バックアップ</h3>
+  <div class="flex">
+    <div><button onclick="exportCSV()">CSV</button></div>
+    <div><button onclick="exportPDF()">PDF</button></div>
+  </div>
+  <div class="flex">
+    <div><button onclick="exportJSON()">JSONエクスポート</button></div>
+    <div><input type="file" id="importFile" accept=".json" onchange="importJSON(event)"></div>
+  </div>
+</div>
+
+<!-- カテゴリ管理モーダル -->
+<div id="categoryModalBg" class="modal-bg">
+  <div class="modal">
+    <h3>カテゴリ管理</h3>
+    <div id="categoryList"></div>
+
+    <button class="primary" onclick="openAddCategory()">＋ カテゴリを追加</button>
+    <br><br>
+    <button onclick="closeCategoryModal()">閉じる</button>
+  </div>
+</div>
+
+<!-- カテゴリ追加・編集モーダル -->
+<div id="editModalBg" class="modal-bg">
+  <div class="modal">
+    <h3 id="editModalTitle">カテゴリ編集</h3>
+    <input id="editCategoryName" placeholder="カテゴリ名">
+
+    <label>色を選択</label>
+    <input id="editCategoryColor" type="color">
+
+    <div class="color-palette">
+      <div class="color-swatch" style="background:#FF9AA2" onclick="pickColor('#FF9AA2')"></div>
+      <div class="color-swatch" style="background:#FFDAC1" onclick="pickColor('#FFDAC1')"></div>
+      <div class="color-swatch" style="background:#E2F0CB" onclick="pickColor('#E2F0CB')"></div>
+      <div class="color-swatch" style="background:#B5EAD7" onclick="pickColor('#B5EAD7')"></div>
+      <div class="color-swatch" style="background:#C7CEEA" onclick="pickColor('#C7CEEA')"></div>
+    </div>
+
+    <br>
+    <button class="primary" onclick="saveCategoryEdit()">保存</button>
+    <button onclick="closeEditModal()">キャンセル</button>
+
+    <input type="hidden" id="editCategoryIndex">
+  </div>
+</div>
+
+<script>
+/* -------------------------
+   データ管理
+-------------------------- */
+let data = [];
+let filtered = [];
+let chart;
+
+let categories = JSON.parse(localStorage.getItem("categories") || 
+  `[{"name":"食費","color":"#FF9AA2"},
+    {"name":"交通","color":"#B5EAD7"},
+    {"name":"日用品","color":"#FFDAC1"},
+    {"name":"娯楽","color":"#C7CEEA"},
+    {"name":"固定費","color":"#E2F0CB"},
+    {"name":"給料","color":"#A3D8F4"},
+    {"name":"その他","color":"#CCCCCC"}]`);
+
+function saveCategories() {
+  localStorage.setItem("categories", JSON.stringify(categories));
+}
+
+/* -------------------------
+   カテゴリ管理モーダル
+-------------------------- */
+function openCategoryModal() {
+  renderCategoryList();
+  document.getElementById("categoryModalBg").style.display = "flex";
+}
+
+function closeCategoryModal() {
+  document.getElementById("categoryModalBg").style.display = "none";
+}
+
+function renderCategoryList() {
+  const list = document.getElementById("categoryList");
+  list.innerHTML = "";
+
+  categories.forEach((cat, i) => {
+    const div = document.createElement("div");
+    div.className = "category-item";
+    div.draggable = true;
+
+    div.innerHTML = `
+      <div style="display:flex; align-items:center;">
+        <div class="color-dot" style="background:${cat.color}"></div>
+        ${cat.name}
+      </div>
+      <div>
+        <button class="small" onclick="editCategory(${i})">編集</button>
+        <button class="small danger" onclick="deleteCategory(${i})">削除</button>
+        <span class="drag-handle">≡</span>
+      </div>
+    `;
+
+    div.addEventListener("dragstart", e => {
+      e.dataTransfer.setData("index", i);
+    });
+
+    div.addEventListener("dragover", e => e.preventDefault());
+
+    div.addEventListener("drop", e => {
+      const from = e.dataTransfer.getData("index");
+      const to = i;
+      const moved = categories.splice(from, 1)[0];
+      categories.splice(to, 0, moved);
+      saveCategories();
+      renderCategoryList();
+      renderCategorySelects();
+    });
+
+    list.appendChild(div);
+  });
+}
+
+function openAddCategory() {
+  document.getElementById("editModalTitle").textContent = "カテゴリ追加";
+  document.getElementById("editCategoryName").value = "";
+  document.getElementById("editCategoryColor").value = "#FF9AA2";
+  document.getElementById("editCategoryIndex").value = "";
+  document.getElementById("editModalBg").style.display = "flex";
+}
+
+function editCategory(i) {
+  document.getElementById("editModalTitle").textContent = "カテゴリ編集";
+  document.getElementById("editCategoryName").value = categories[i].name;
+  document.getElementById("editCategoryColor").value = categories[i].color;
+  document.getElementById("editCategoryIndex").value = i;
+  document.getElementById("editModalBg").style.display = "flex";
+}
+
+function deleteCategory(i) {
+  if (!confirm("削除しますか？")) return;
+  categories.splice(i, 1);
+  saveCategories();
+  renderCategoryList();
+  renderCategorySelects();
+}
+
+function pickColor(c) {
+  document.getElementById("editCategoryColor").value = c;
+}
+
+function saveCategoryEdit() {
+  const name = document.getElementById("editCategoryName").value.trim();
+  const color = document.getElementById("editCategoryColor").value;
+  const index = document.getElementById("editCategoryIndex").value;
+
+  if (!name) {
+    alert("カテゴリ名を入力してください");
+    return;
+  }
+
+  if (index === "") {
+    categories.push({ name, color });
+  } else {
+    categories[index] = { name, color };
+  }
+
+  saveCategories();
+  renderCategoryList();
+  renderCategorySelects();
+  closeEditModal();
+}
+
+function closeEditModal() {
+  document.getElementById("editModalBg").style.display = "none";
+}
+
+/* -------------------------
+   カテゴリ選択欄の更新
+-------------------------- */
+function renderCategorySelects() {
+  const catSel = document.getElementById("category");
+  const filterSel = document.getElementById("filterCategory");
+
+  catSel.innerHTML = "";
+  filterSel.innerHTML = `<option value="">すべて</option>`;
+
+  categories.forEach(cat => {
+    const opt = document.createElement("option");
+    opt.textContent = cat.name;
+    catSel.appendChild(opt);
+
+    const opt2 = document.createElement("option");
+    opt2.textContent = cat.name;
+    filterSel.appendChild(opt2);
+  });
+}
+
+/* -------------------------
+   家計簿データ
+-------------------------- */
+function loadData() {
+  const raw = localStorage.getItem("kakeibo_v2");
+  data = raw ? JSON.parse(raw) : [];
+}
+
+function saveData() {
+  localStorage.setItem("kakeibo_v2", JSON.stringify(data));
+}
+
+/* -------------------------
+   入力フォーム
+-------------------------- */
+function clearForm() {
+  document.getElementById("date").value = "";
+  document.getElementById("title").value = "";
+  document.getElementById("amount").value = "";
+  document.getElementById("type").value = "expense";
+  document.getElementById("category").value = categories[0].name;
+  document.getElementById("editId").value = "";
+}
+
+function saveEntry() {
+  const id = document.getElementById("editId").value;
+  const date = document.getElementById("date").value;
+  const title = document.getElementById("title").value.trim();
+  const amount = parseInt(document.getElementById("amount").value, 10);
+  const type = document.getElementById("type").value;
+  const category = document.getElementById("category").value;
+
+  if (!date || !title || isNaN(amount)) {
+    alert("日付・タイトル・金額を入力してください");
+    return;
+  }
+
+  if (id) {
+    const idx = data.findIndex(e => e.id === id);
+    if (idx !== -1) {
+      data[idx] = { id, date, title, amount, type, category };
+    }
+  } else {
+    const newId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+    data.push({ id: newId, date, title, amount, type, category });
+  }
+
+  saveData();
+  clearForm();
+  applyFilter();
+}
+
+/* -------------------------
+   フィルタ
+-------------------------- */
+function applyFilter() {
+  const month = document.getElementById("filterMonth").value;
+  const cat = document.getElementById("filterCategory").value;
+  const type = document.getElementById("filterType").value;
+  const kw = document.getElementById("filterKeyword").value.trim();
+
+  filtered = data.filter(item => {
+    if (month && !item.date.startsWith(month)) return false;
+    if (cat && item.category !== cat) return false;
+    if (type && item.type !== type) return false;
+    if (kw && !item.title.includes(kw)) return false;
+    return true;
+  });
+
+  renderList();
+  renderSummary();
+  renderChart();
+}
+
+function resetFilter() {
+  document.getElementById("filterMonth").value = "";
+  document.getElementById("filterCategory").value = "";
+  document.getElementById("filterType").value = "";
+  document.getElementById("filterKeyword").value = "";
+  applyFilter();
+}
+
+/* -------------------------
+   一覧
+-------------------------- */
+function renderList() {
+  const tbody = document.getElement
